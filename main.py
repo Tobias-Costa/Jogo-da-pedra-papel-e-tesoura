@@ -1,57 +1,88 @@
-import pygame
-from camera import Camera
-from game_logic import GameLogic
-from display import Display
+import cv2
+import cvzone
+import numpy as np
+from cvzone.HandTrackingModule import HandDetector
+import time
+import random
 
-# Configurações iniciais
-pygame.init()
-screen_width, screen_height = 1280, 720  # Ajustado para tela 1280x720
-screen = pygame.display.set_mode((screen_width, screen_height))
-pygame.display.set_caption("Pedra, Papel ou Tesoura")
+def ensure_alpha_channel(img):
+    if img.shape[2] == 3:  # Se a imagem tiver apenas 3 canais (RGB)
+        alpha_channel = np.ones((img.shape[0], img.shape[1]), dtype=np.uint8) * 255  # Canal alfa totalmente opaco
+        img = cv2.merge([img, alpha_channel])
+    return img
 
-# Inicializando componentes
-camera = Camera()
-game_logic = GameLogic()
-display = Display(screen)
+detector = HandDetector(maxHands=1)
+cap = cv2.VideoCapture(0)
+cap.set(3,640)
+cap.set(4,480)
 
-# Controlador de framerate
-clock = pygame.time.Clock()
+timer = 0
+stateResult = False
+startGame = False
+scores = [0,0]
 
-# Loop principal do jogo
-running = True
-while running:
-    screen.fill((0, 0, 0))  # Limpar a tela a cada frame
+while True:
+    imgBG = cv2.imread("assets/tigre_arena.png")
+    sucess, img = cap.read()
 
-    # Eventos de saída e reinício
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
-            # Exibir tela de fim de jogo
-        if game_logic.game_over:
-            if game_logic.player_score > game_logic.computer_score:
-                display.display_end_screen("assets/vitoria_background.jpg", "Parabéns! Você ganhou!")
-            else:
-                display.display_end_screen("assets/derrota_background.jpg", "Você perdeu! Tente novamente.")
-            # Reiniciar o jogo após a exibição
-            game_logic.reset_game()
+    imgScaled = cv2.resize(img, (0,0), None, 0.8125, 0.8125)
+    imgScaled = imgScaled[:,120:480]
 
-    # Capturar a imagem da câmera e detectar a jogada do jogador
-    player_move, frame_surface = camera.get_frame()
 
-    # Lógica do jogo e atualização do placar se não estiver entre rodadas
-    current_time = pygame.time.get_ticks()
-    if player_move:
-        game_logic.update(player_move, current_time)
+    hands, img = detector.findHands(imgScaled)
 
-    # Exibir a imagem da câmera, ícones e placar na tela
-    display.update_display(frame_surface, game_logic)
+    if startGame:
+        if stateResult is False:
+            timer = time.time() - initialTime
+            cv2.putText(imgBG, str(int(timer)), (610,645), cv2.FONT_HERSHEY_PLAIN, 6, (0,0,255), 3)
 
-    # Atualizar tela
-    pygame.display.flip()
+            if timer > 3:
+                stateResult = True
+                timer = 0
 
-    # Limitar o framerate
-    clock.tick(30)
+                if hands:
+                    playerMove = None
+                    hand = hands[0]
+                    fingers = detector.fingersUp(hand)
+                    if fingers == [0,0,0,0,0]:
+                        playerMove = "pedra"
+                    if fingers == [1,1,1,1,1]:
+                        playerMove = "papel"
+                    if fingers == [0,1,1,0,0]:
+                        playerMove = "tesoura"
+                    
+                    randomChoice = random.choice(['pedra', 'papel', 'tesoura'])
+                    imgAI =  cv2.imread(f'assets/{randomChoice}.png', cv2.IMREAD_UNCHANGED)
+                    imgAI = ensure_alpha_channel(imgAI)
+                    imgBG = cvzone.overlayPNG(imgBG, imgAI, (130,384))
+                    
+                    if (playerMove == 'pedra' and randomChoice == 'tesoura') or \
+                            (playerMove == 'papel' and randomChoice == 'pedra') or \
+                            (playerMove == 'tesoura' and randomChoice == 'papel'):
+                        scores[1] += 1
 
-# Finalizar
-camera.release()
-pygame.quit()
+                    if (playerMove == 'tesoura' and randomChoice == 'pedra') or \
+                            (playerMove == 'pedra' and randomChoice == 'papel') or \
+                            (playerMove == 'papel' and randomChoice == 'tesoura'):
+                        scores[0] += 1
+
+
+    imgBG[298:688,847:1207] = imgScaled
+
+    if stateResult:
+        imgBG = cvzone.overlayPNG(imgBG, imgAI, (130,384))
+
+    cv2.putText(imgBG, str(scores[0]), (330,297), cv2.FONT_HERSHEY_PLAIN, 6, (255,255,255), 4)
+    cv2.putText(imgBG, str(scores[1]), (1113,297), cv2.FONT_HERSHEY_PLAIN, 6, (255,255,255), 4)
+
+    cv2.imshow("Pedra Papel Tesoura Fortune", imgBG)
+
+    key = cv2.waitKey(1)
+    if key == ord('s'):
+        startGame = True
+        initialTime = time.time()
+        stateResult = False
+    if key==ord('q'):
+        break
+cap.release()
+cv2.destroyAllWindows()
